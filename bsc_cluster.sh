@@ -19,7 +19,14 @@ sleepAfterStart=10
 # stop geth client
 function exit_previous() {
     ValIdx=$1
-    ps -ef  | grep geth$ValIdx | grep config |awk '{print $2}' | xargs kill
+    # 获取PID列表并检查是否为空
+    pids=$(ps -ef  | grep geth$ValIdx | grep config | awk '{print $2}')
+    if [ ! -z "$pids" ]; then
+        echo "Stopping processes with PIDs: $pids"
+        echo $pids | xargs kill
+    else
+        echo "No geth processes found to stop"
+    fi
     sleep ${sleepBeforeStart}
 }
 
@@ -57,13 +64,38 @@ function reset_genesis() {
     mv genesis-template.json.bk genesis-template.json
     mv scripts/init_holders.template.bk scripts/init_holders.template
 
-    poetry install --no-root
-    npm install
-    rm -rf lib/forge-std
-    forge install --no-git foundry-rs/forge-std@v1.7.3
-    cd lib/forge-std/lib
-    rm -rf ds-test
-    git clone https://github.com/dapphub/ds-test
+    # 检查poetry是否安装，如果安装则执行，否则跳过
+    echo "检查并安装poetry依赖..."
+    if command -v poetry &> /dev/null; then
+        poetry install --no-root || echo "警告: poetry依赖安装失败，继续执行..."
+    else
+        echo "poetry not found, skipping poetry install"
+    fi
+    
+    # 检查npm是否安装，如果安装则执行
+    echo "检查并安装npm依赖..."
+    if command -v npm &> /dev/null; then
+        npm install || echo "警告: npm依赖安装失败，继续执行..."
+    else
+        echo "npm not found, skipping npm install"
+    fi
+    
+    # 检查forge是否安装，如果安装则执行
+    echo "检查并安装forge依赖..."
+    if command -v forge &> /dev/null; then
+        rm -rf lib/forge-std
+        forge install --no-git foundry-rs/forge-std@v1.7.3 || echo "警告: forge依赖安装失败，继续执行..."
+        
+        if [ -d "lib/forge-std/lib" ]; then
+            cd lib/forge-std/lib
+            rm -rf ds-test
+            git clone https://github.com/dapphub/ds-test || echo "警告: ds-test克隆失败，继续执行..."
+        else
+            echo "警告: lib/forge-std/lib目录不存在，跳过ds-test克隆"
+        fi
+    else
+        echo "forge not found, skipping forge install"
+    fi
 }
 
 function prepare_config() {
@@ -209,6 +241,8 @@ function native_start() {
         MetricsPort=$((6060 + i*2))
         PProfPort=$((7060 + i*2))
  
+        # 确保目录存在
+        mkdir -p ${workspace}/.local/node${i}
         # geth may be replaced
         cp ${workspace}/bin/geth ${workspace}/.local/node${i}/geth${i}
         # update `config` in genesis.json
@@ -229,6 +263,8 @@ function native_start() {
             >> ${workspace}/.local/node${i}/bsc-node.log 2>&1 &
         
         if [ ${EnableSentryNode} = true ]; then
+            # 确保目录存在
+            mkdir -p ${workspace}/.local/sentry${i}
             cp ${workspace}/bin/geth ${workspace}/.local/sentry${i}/geth${i}
             nohup  ${workspace}/.local/sentry${i}/geth${i} --config ${workspace}/.local/sentry${i}/config.toml \
                 --datadir ${workspace}/.local/sentry${i} \
@@ -246,6 +282,8 @@ function native_start() {
     done
 
     if [ ${EnableFullNode} = true ]; then
+        # 确保目录存在
+        mkdir -p ${workspace}/.local/fullnode0
         cp ${workspace}/bin/geth ${workspace}/.local/fullnode0/geth0
         nohup  ${workspace}/.local/fullnode0/geth0 --config ${workspace}/.local/fullnode0/config.toml \
             --datadir ${workspace}/.local/fullnode0 \
